@@ -1,0 +1,3 @@
+[submodule "lib/rabcl"]
+	path = lib/rabcl
+	url = git@github.com:robot-trainee/rabcl.git
