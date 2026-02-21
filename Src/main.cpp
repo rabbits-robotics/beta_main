@@ -30,7 +30,6 @@
 #include "rabcl/utils/type.hpp"
 #include "rabcl/interface/uart.hpp"
 #include "rabcl/interface/can.hpp"
-#include "rabcl/component/ld_20mg.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,11 +46,11 @@
 /* USER CODE BEGIN PD */
 uint16_t control_count = 0;
 uint16_t can_count = 0;
+int32_t tmp_output = 3000;
 char printf_buf[100];
 
 rabcl::Info robot_data;
 rabcl::Uart* uart;
-rabcl::LD_20MG* pitch_motor;
 
 /* USER CODE END PD */
 
@@ -120,8 +119,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
     // ---can
     can_count++;
-    if (can_count >= 25) // 40Hz
+    if (can_count >= 1) // 1000Hz
     {
+      tmp_output+=10;
+      if (tmp_output > 8000) {
+        tmp_output = 3000;
+      }
       can_count = 0;
       CAN_TxHeaderTypeDef TxHeader;
       TxHeader.RTR = CAN_RTR_DATA;
@@ -132,52 +135,32 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       uint8_t TxData[8];
       if (0 < HAL_CAN_GetTxMailboxesFreeLevel(&hcan))
       {
-        TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CAN_CHASSIS_X_Y;
-        rabcl::Can::Prepare2FloatData(robot_data.chassis_vel_x_, robot_data.chassis_vel_y_, TxData);
+        TxHeader.StdId = (uint32_t)rabcl::CAN_ID::PITCH_TX;
+        rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 1500, TxData);
+        snprintf(printf_buf, 100, "tx: %#x,%#x,%#x,%#x,%#x,%#x,%#x,%#x\n",
+          TxData[0], TxData[1], TxData[2], TxData[3], TxData[4], TxData[5], TxData[6], TxData[7]);
+        HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
         if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox) != HAL_OK)
         {
           Error_Handler();
         }
       }
-      if (0 < HAL_CAN_GetTxMailboxesFreeLevel(&hcan))
-      {
-        TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CAN_CHASSIS_Z_YAW;
-        rabcl::Can::Prepare2FloatData(robot_data.chassis_vel_z_, robot_data.yaw_pos_, TxData);
-        if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox) != HAL_OK)
-        {
-          Error_Handler();
-        }
-      }
-      if (0 < HAL_CAN_GetTxMailboxesFreeLevel(&hcan))
-      {
-        TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CAN_PITCH_MODES;
-        uint8_t mode_data[4] = {robot_data.load_mode_, robot_data.fire_mode_, robot_data.speed_mode_, robot_data.chassis_mode_};
-        rabcl::Can::Prepare1Float4IntData(robot_data.pitch_pos_, mode_data, TxData);
-        if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox) != HAL_OK)
-        {
-          Error_Handler();
-        }
-      }
+    }
+  }
+}
 
-      // ---check robot data
-      // snprintf(printf_buf, 100, "chassis_vel_x: %f\n", robot_data.chassis_vel_x_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-      // snprintf(printf_buf, 100, "chassis_vel_y: %f\n", robot_data.chassis_vel_y_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-      // snprintf(printf_buf, 100, "chassis_vel_z: %f\n", robot_data.chassis_vel_z_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-      // snprintf(printf_buf, 100, "yaw_vel: %f\n", robot_data.yaw_vel_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-      // snprintf(printf_buf, 100, "pitch_vel_: %f\n", robot_data.pitch_vel_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-      // snprintf(printf_buf, 100, "load_mode: %d\n", robot_data.load_mode_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-      // snprintf(printf_buf, 100, "fire_mode: %d\n", robot_data.fire_mode_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-      // snprintf(printf_buf, 100, "speed_mode: %d\n", robot_data.speed_mode_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-      // snprintf(printf_buf, 100, "chassis_mode: %d\n", robot_data.chassis_mode_);
-      // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  CAN_RxHeaderTypeDef RxHeader;
+  uint8_t RxData[8];
+  if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+  {
+    // snprintf(printf_buf, 100, "rx: %#x,%#x,%#x,%#x,%#x,%#x,%#x,%#x\n",
+    //   RxData[0], RxData[1], RxData[2], RxData[3], RxData[4], RxData[5], RxData[6], RxData[7]);
+    // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
+    if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data))
+    {
+      HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
     }
   }
 }
@@ -218,7 +201,6 @@ int main(void)
 
   /* USER CODE BEGIN 1 */
   uart = new rabcl::Uart();
-  pitch_motor = new rabcl::LD_20MG(0.02, 0.91, M_PI / 12, 34.0 / 29.0);
 
   /* USER CODE END 1 */
 
@@ -264,6 +246,10 @@ int main(void)
   // ---start interrupt processing
   HAL_TIM_Base_Start_IT(&htim15);
   HAL_CAN_Start(&hcan);
+  if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
+  {
+    Error_Handler();
+  }
   HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
 
   /* USER CODE END 2 */
