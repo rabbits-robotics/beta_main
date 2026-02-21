@@ -84,10 +84,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       control_count = 0;
       HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
 
-      // ---pitch motor
-      pitch_motor->Updata(robot_data.pitch_pos_);
-      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, (uint16_t)pitch_motor->CalcMotorOutput());
-
       // --- load motor
       if (robot_data.load_mode_ == 1)
       {
@@ -250,7 +246,6 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM15_Init();
   MX_USART2_UART_Init();
-  MX_TIM2_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
   // ---ESC calibration
@@ -264,7 +259,6 @@ int main(void)
   HAL_Delay(3000);
 
   // ---start PWM
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
 
   // ---start interrupt processing

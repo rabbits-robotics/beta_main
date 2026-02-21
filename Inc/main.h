@@ -67,8 +67,6 @@ void Error_Handler(void);
 #define FIRE_RIGHT_MOTOR_GPIO_Port GPIOA
 #define FIRE_LEFT_MOTOR_Pin GPIO_PIN_9
 #define FIRE_LEFT_MOTOR_GPIO_Port GPIOA
-#define PITCH_MOTOR_PWM_Pin GPIO_PIN_10
-#define PITCH_MOTOR_PWM_GPIO_Port GPIOA
 #define SWDIO_Pin GPIO_PIN_13
 #define SWDIO_GPIO_Port GPIOA
 #define SWCLK_Pin GPIO_PIN_14
