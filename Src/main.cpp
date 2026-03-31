@@ -75,7 +75,7 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  if (htim == &htim15)
+  if (htim == &htim2)
   {
     control_count++;
     if (control_count >= 10) // 100Hz
@@ -121,7 +121,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     can_count++;
     if (can_count >= 1) // 1000Hz
     {
-      tmp_output+=10;
+      tmp_output+=1;
       if (tmp_output > 8000) {
         tmp_output = 3000;
       }
@@ -137,9 +137,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       {
         TxHeader.StdId = (uint32_t)rabcl::CAN_ID::PITCH_TX;
         rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 1500, TxData);
-        snprintf(printf_buf, 100, "tx: %#x,%#x,%#x,%#x,%#x,%#x,%#x,%#x\n",
-          TxData[0], TxData[1], TxData[2], TxData[3], TxData[4], TxData[5], TxData[6], TxData[7]);
-        HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
+        // rabcl::Can::PrepareLKMotorMotorOnCmd(TxData);
+        // snprintf(printf_buf, 100, "tx: %#x,%#x,%#x,%#x,%#x,%#x,%#x,%#x\n",
+        //   TxData[0], TxData[1], TxData[2], TxData[3], TxData[4], TxData[5], TxData[6], TxData[7]);
+        // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
         if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox) != HAL_OK)
         {
           Error_Handler();
@@ -160,7 +161,10 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
     if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data))
     {
-      HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
+      // HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
+      // snprintf(printf_buf, 100, "(cmd, tmp, t, s, p) %#x, %d, %d, %d, %d\n",
+      //   robot_data.command_byte_, robot_data.temperature_, robot_data.torque_, robot_data.speed_, robot_data.position_);
+      HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
     }
   }
 }
@@ -226,9 +230,9 @@ int main(void)
   MX_CAN_Init();
   MX_I2C1_Init();
   MX_TIM1_Init();
-  MX_TIM15_Init();
   MX_USART2_UART_Init();
   MX_TIM3_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   // ---ESC calibration
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -244,7 +248,7 @@ int main(void)
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
 
   // ---start interrupt processing
-  HAL_TIM_Base_Start_IT(&htim15);
+  HAL_TIM_Base_Start_IT(&htim2);
   HAL_CAN_Start(&hcan);
   if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
   {
@@ -281,7 +285,9 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -291,12 +297,12 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
   {
     Error_Handler();
   }

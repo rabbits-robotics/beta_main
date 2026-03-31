@@ -57,7 +57,7 @@
 /* External variables --------------------------------------------------------*/
 extern CAN_HandleTypeDef hcan;
 extern TIM_HandleTypeDef htim1;
-extern TIM_HandleTypeDef htim15;
+extern TIM_HandleTypeDef htim2;
 extern DMA_HandleTypeDef hdma_usart2_rx;
 extern UART_HandleTypeDef huart2;
 /* USER CODE BEGIN EV */
@@ -217,20 +217,6 @@ void DMA1_Channel6_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles CAN TX interrupt.
-  */
-void CAN_TX_IRQHandler(void)
-{
-  /* USER CODE BEGIN CAN_TX_IRQn 0 */
-
-  /* USER CODE END CAN_TX_IRQn 0 */
-  HAL_CAN_IRQHandler(&hcan);
-  /* USER CODE BEGIN CAN_TX_IRQn 1 */
-
-  /* USER CODE END CAN_TX_IRQn 1 */
-}
-
-/**
   * @brief This function handles CAN RX0 interrupt.
   */
 void CAN_RX0_IRQHandler(void)
@@ -253,10 +239,23 @@ void TIM1_BRK_TIM15_IRQHandler(void)
 
   /* USER CODE END TIM1_BRK_TIM15_IRQn 0 */
   HAL_TIM_IRQHandler(&htim1);
-  HAL_TIM_IRQHandler(&htim15);
   /* USER CODE BEGIN TIM1_BRK_TIM15_IRQn 1 */
 
   /* USER CODE END TIM1_BRK_TIM15_IRQn 1 */
+}
+
+/**
+  * @brief This function handles TIM2 global interrupt.
+  */
+void TIM2_IRQHandler(void)
+{
+  /* USER CODE BEGIN TIM2_IRQn 0 */
+
+  /* USER CODE END TIM2_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim2);
+  /* USER CODE BEGIN TIM2_IRQn 1 */
+
+  /* USER CODE END TIM2_IRQn 1 */
 }
 
 /**
