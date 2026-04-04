@@ -45,9 +45,20 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 uint16_t control_count = 0;
-uint16_t can_count = 0;
 int32_t tmp_output = 3000;
 char printf_buf[100];
+
+uint8_t can_tx_idx = 0;
+static const uint8_t CAN_MOTOR_COUNT = 6;
+const uint32_t can_motor_ids[CAN_MOTOR_COUNT] = {
+  (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_RIGHT_TX + 0x200,
+  (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_LEFT_TX  + 0x200,
+  (uint32_t)rabcl::CAN_ID::CHASSIS_BACK_RIGHT_TX  + 0x200,
+  (uint32_t)rabcl::CAN_ID::CHASSIS_BACK_LEFT_TX   + 0x200,
+  (uint32_t)rabcl::CAN_ID::YAW_TX,
+  (uint32_t)rabcl::CAN_ID::PITCH_TX,
+};
+uint8_t can_motor_data[CAN_MOTOR_COUNT][8];
 
 rabcl::Info robot_data;
 rabcl::Uart* uart;
@@ -77,10 +88,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if (htim == &htim2)
   {
+    // ---control (100Hz)
     control_count++;
-    if (control_count >= 10) // 100Hz
+    if (control_count >= 15)
     {
       control_count = 0;
+      tmp_output += 3;
+      if (tmp_output > 8000) { tmp_output = 3000; }
       HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
 
       // --- load motor
@@ -115,35 +129,30 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         // left
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, (uint16_t)1000);
       }
+
+      // ---update CAN motor commands
+      rabcl::Can::PrepareDMMotorVelocityCmd(1.0f, can_motor_data[0]);  // FR: 1 rad/s (output shaft)
+      rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[1]);  // FL
+      rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[2]);  // BR
+      rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[3]);  // BL
+      rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 3000, can_motor_data[4]);  // YAW
+      rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 1500, can_motor_data[5]);  // PITCH
     }
 
-    // ---can
-    can_count++;
-    if (can_count >= 2) // 500Hz
+    // ---CAN TX round-robin (1500Hz, 500Hz/motor)
     {
-      tmp_output+=1;
-      if (tmp_output > 8000) {
-        tmp_output = 3000;
-      }
-      can_count = 0;
       CAN_TxHeaderTypeDef TxHeader;
       TxHeader.RTR = CAN_RTR_DATA;
       TxHeader.IDE = CAN_ID_STD;
       TxHeader.DLC = 8;
       TxHeader.TransmitGlobalTime = DISABLE;
       uint32_t TxMailbox;
-      uint8_t TxData[8];
-      if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) > 0)
+      uint8_t free_mb = HAL_CAN_GetTxMailboxesFreeLevel(&hcan);
+      for (uint8_t i = 0; i < free_mb; i++)
       {
-        TxHeader.StdId = (uint32_t)rabcl::CAN_ID::PITCH_TX;
-        rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 1500, TxData);
-        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-      }
-      if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) > 0)
-      {
-        TxHeader.StdId = (uint32_t)rabcl::CAN_ID::YAW_TX;
-        rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 3000, TxData);
-        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+        TxHeader.StdId = can_motor_ids[can_tx_idx];
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, can_motor_data[can_tx_idx], &TxMailbox);
+        can_tx_idx = (can_tx_idx + 1) % CAN_MOTOR_COUNT;
       }
     }
   }
@@ -155,35 +164,10 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
   uint8_t RxData[8];
   if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
   {
-    if (RxData[0] == 0xC0)
+    if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data))
     {
-      uint16_t kp = (uint16_t)(((uint16_t)RxData[3] << 8) | RxData[2]);
-      uint16_t ki = (uint16_t)(((uint16_t)RxData[5] << 8) | RxData[4]);
-      uint16_t kd = (uint16_t)(((uint16_t)RxData[7] << 8) | RxData[6]);
-      snprintf(printf_buf, 100, "pid param_id=%#x: kp=%u ki=%u kd=%u\n", RxData[1], kp, ki, kd);
-      HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
+      HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
     }
-    // else if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data))
-    // {
-    //   if (RxHeader.StdId == (uint32_t)rabcl::CAN_ID::PITCH_RX)
-    //   {
-    //     snprintf(printf_buf, 100, "pitch: pos=%.3f vel=%.3f cur=%.3f tmp=%.1f\n",
-    //       robot_data.pitch_act_.position_,
-    //       robot_data.pitch_act_.velocity_,
-    //       robot_data.pitch_act_.current_,
-    //       robot_data.pitch_act_.temperature_);
-    //     HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-    //   }
-    //   else if (RxHeader.StdId == (uint32_t)rabcl::CAN_ID::YAW_RX)
-    //   {
-    //     snprintf(printf_buf, 100, "yaw:   pos=%.3f vel=%.3f cur=%.3f tmp=%.1f\n",
-    //       robot_data.yaw_act_.position_,
-    //       robot_data.yaw_act_.velocity_,
-    //       robot_data.yaw_act_.current_,
-    //       robot_data.yaw_act_.temperature_);
-    //     HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-    //   }
-    // }
   }
 }
 
@@ -291,6 +275,29 @@ int main(void)
     rabcl::Can::PrepareLKMotorReadParam(0x0B, TxData);
     HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
     HAL_Delay(10);
+  }
+
+  // ---enable DM motors
+  {
+    CAN_TxHeaderTypeDef TxHeader;
+    TxHeader.RTR = CAN_RTR_DATA;
+    TxHeader.IDE = CAN_ID_STD;
+    TxHeader.DLC = 8;
+    TxHeader.TransmitGlobalTime = DISABLE;
+    uint32_t TxMailbox;
+    uint8_t TxData[8];
+    rabcl::Can::PrepareDMMotorEnable(TxData);
+    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_RIGHT_TX;
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+    HAL_Delay(10);
+    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_LEFT_TX;
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+    HAL_Delay(10);
+    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_BACK_RIGHT_TX;
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+    HAL_Delay(10);
+    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_BACK_LEFT_TX;
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
   }
 
   // ---start interrupt processing
