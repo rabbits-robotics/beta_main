@@ -119,7 +119,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
     // ---can
     can_count++;
-    if (can_count >= 1) // 1000Hz
+    if (can_count >= 2) // 500Hz
     {
       tmp_output+=1;
       if (tmp_output > 8000) {
@@ -133,18 +133,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       TxHeader.TransmitGlobalTime = DISABLE;
       uint32_t TxMailbox;
       uint8_t TxData[8];
-      if (0 < HAL_CAN_GetTxMailboxesFreeLevel(&hcan))
+      if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) > 0)
       {
         TxHeader.StdId = (uint32_t)rabcl::CAN_ID::PITCH_TX;
         rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 1500, TxData);
-        // rabcl::Can::PrepareLKMotorMotorOnCmd(TxData);
-        // snprintf(printf_buf, 100, "tx: %#x,%#x,%#x,%#x,%#x,%#x,%#x,%#x\n",
-        //   TxData[0], TxData[1], TxData[2], TxData[3], TxData[4], TxData[5], TxData[6], TxData[7]);
-        // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-        if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox) != HAL_OK)
-        {
-          Error_Handler();
-        }
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+      }
+      if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) > 0)
+      {
+        TxHeader.StdId = (uint32_t)rabcl::CAN_ID::YAW_TX;
+        rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 300, TxData);
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
       }
     }
   }
@@ -156,15 +155,34 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
   uint8_t RxData[8];
   if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
   {
-    // snprintf(printf_buf, 100, "rx: %#x,%#x,%#x,%#x,%#x,%#x,%#x,%#x\n",
-    //   RxData[0], RxData[1], RxData[2], RxData[3], RxData[4], RxData[5], RxData[6], RxData[7]);
-    // HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-    if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data))
+    if (RxData[0] == 0xC0)
     {
-      // HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
-      // snprintf(printf_buf, 100, "(cmd, tmp, t, s, p) %#x, %d, %d, %d, %d\n",
-      //   robot_data.command_byte_, robot_data.temperature_, robot_data.torque_, robot_data.speed_, robot_data.position_);
+      uint16_t kp = (uint16_t)(((uint16_t)RxData[3] << 8) | RxData[2]);
+      uint16_t ki = (uint16_t)(((uint16_t)RxData[5] << 8) | RxData[4]);
+      uint16_t kd = (uint16_t)(((uint16_t)RxData[7] << 8) | RxData[6]);
+      snprintf(printf_buf, 100, "pid param_id=%#x: kp=%u ki=%u kd=%u\n", RxData[1], kp, ki, kd);
       HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
+    }
+    else if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data))
+    {
+      if (RxHeader.StdId == (uint32_t)rabcl::CAN_ID::PITCH_RX)
+      {
+        snprintf(printf_buf, 100, "pitch: pos=%.3f vel=%.3f cur=%.3f tmp=%.1f\n",
+          robot_data.pitch_act_.position_,
+          robot_data.pitch_act_.velocity_,
+          robot_data.pitch_act_.current_,
+          robot_data.pitch_act_.temperature_);
+        HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
+      }
+      else if (RxHeader.StdId == (uint32_t)rabcl::CAN_ID::YAW_RX)
+      {
+        snprintf(printf_buf, 100, "yaw:   pos=%.3f vel=%.3f cur=%.3f tmp=%.1f\n",
+          robot_data.yaw_act_.position_,
+          robot_data.yaw_act_.velocity_,
+          robot_data.yaw_act_.current_,
+          robot_data.yaw_act_.temperature_);
+        HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
+      }
     }
   }
 }
@@ -255,6 +273,20 @@ int main(void)
     Error_Handler();
   }
   HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
+
+  // ---read YAW motor angle PID params
+  {
+    CAN_TxHeaderTypeDef TxHeader;
+    TxHeader.RTR = CAN_RTR_DATA;
+    TxHeader.IDE = CAN_ID_STD;
+    TxHeader.DLC = 8;
+    TxHeader.TransmitGlobalTime = DISABLE;
+    uint32_t TxMailbox;
+    uint8_t TxData[8];
+    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::YAW_TX;
+    rabcl::Can::PrepareLKMotorReadParam(0x0A, TxData);
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+  }
 
   /* USER CODE END 2 */
 
