@@ -31,6 +31,7 @@
 #include "rabcl/interface/uart.hpp"
 #include "rabcl/interface/can.hpp"
 #include "rabcl/component/bno055.hpp"
+#include "rabcl/controller/omni_drive.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,7 +47,9 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 uint16_t control_count = 0;
+uint16_t omni_count = 0;
 int32_t tmp_output = 3000;
+static const int32_t YAW_OFFSET = 24000;  // [0.01 deg] motor zero → robot zero
 char printf_buf[100];
 
 uint8_t can_tx_idx = 0;
@@ -64,6 +67,7 @@ uint8_t can_motor_data[CAN_MOTOR_COUNT][8];
 rabcl::Info robot_data;
 rabcl::Uart* uart;
 rabcl::BNO055 bno055;
+rabcl::OmniDrive omni_drive(0.06, 0.28);
 
 /* USER CODE END PD */
 
@@ -141,13 +145,24 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         // left
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, (uint16_t)1000);
       }
+    }
 
-      // ---update CAN motor commands
-      rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[0]);  // FR
-      rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[1]);  // FL
-      rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[2]);  // BR
-      rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[3]);  // BL
-      rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 3000, can_motor_data[4]);  // YAW
+    // ---motor commands (500Hz)
+    omni_count++;
+    if (omni_count >= 3)
+    {
+      omni_count = 0;
+      double chassis_vel_cmd[4];
+      omni_drive.CalcVel(
+        0.0, 0.0, 0.0,
+        chassis_vel_cmd[0], chassis_vel_cmd[1], chassis_vel_cmd[2], chassis_vel_cmd[3],
+        robot_data.yaw_act_.position_);
+      rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[0], can_motor_data[0]);  // FR
+      rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[1], can_motor_data[1]);  // FL
+      rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[2], can_motor_data[2]);  // BR
+      rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[3], can_motor_data[3]);  // BL
+      // rabcl::Can::PrepareLKMotorPositionCmd(YAW_OFFSET, 3000, can_motor_data[4]);  // YAW
+      rabcl::Can::PrepareLKMotorReadMotorState2(can_motor_data[4]);  // YAW: read only
       rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 400, can_motor_data[5]);  // PITCH
     }
 
@@ -176,7 +191,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
   uint8_t RxData[8];
   if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
   {
-    if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data))
+    if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data,
+          YAW_OFFSET * (static_cast<float>(M_PI) / 18000.0f)))
     {
       HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
     }
