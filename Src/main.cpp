@@ -106,7 +106,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       bno055.UpdateEuler(imu_buf, robot_data.imu_);
 
       tmp_output += 3;
-      if (tmp_output > 8000) { tmp_output = 3000; }
+      if (tmp_output > 7500) { tmp_output = 3000; }
       HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
 
       // --- load motor
@@ -143,12 +143,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       }
 
       // ---update CAN motor commands
-      rabcl::Can::PrepareDMMotorVelocityCmd(1.0f, can_motor_data[0]);  // FR: 1 rad/s (output shaft)
+      rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[0]);  // FR
       rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[1]);  // FL
       rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[2]);  // BR
       rabcl::Can::PrepareDMMotorVelocityCmd(0.0f, can_motor_data[3]);  // BL
       rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 3000, can_motor_data[4]);  // YAW
-      rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 1500, can_motor_data[5]);  // PITCH
+      rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 400, can_motor_data[5]);  // PITCH
     }
 
     // ---CAN TX round-robin (1500Hz, 500Hz/motor)
@@ -296,6 +296,27 @@ int main(void)
     HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
     HAL_Delay(10);
     rabcl::Can::PrepareLKMotorReadParam(0x0B, TxData);
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+    HAL_Delay(10);
+  }
+
+  // ---read PITCH motor PID params
+  {
+    CAN_TxHeaderTypeDef TxHeader;
+    TxHeader.RTR = CAN_RTR_DATA;
+    TxHeader.IDE = CAN_ID_STD;
+    TxHeader.DLC = 8;
+    TxHeader.TransmitGlobalTime = DISABLE;
+    uint32_t TxMailbox;
+    uint8_t TxData[8];
+    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::PITCH_TX;
+    rabcl::Can::PrepareRMDMotorReadPID(TxData);
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+    HAL_Delay(10);
+    rabcl::Can::PrepareRMDMotorWritePIDToRAM(250, 100, 250, 0, 250, 0, TxData); // curr(250,100) speed(250,0) pos(250,0)
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+    HAL_Delay(10);
+    rabcl::Can::PrepareRMDMotorReadPID(TxData);
     HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
     HAL_Delay(10);
   }
