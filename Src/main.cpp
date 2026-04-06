@@ -30,6 +30,7 @@
 #include "rabcl/utils/type.hpp"
 #include "rabcl/interface/uart.hpp"
 #include "rabcl/interface/can.hpp"
+#include "rabcl/component/bno055.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,6 +63,7 @@ uint8_t can_motor_data[CAN_MOTOR_COUNT][8];
 
 rabcl::Info robot_data;
 rabcl::Uart* uart;
+rabcl::BNO055 bno055;
 
 /* USER CODE END PD */
 
@@ -93,6 +95,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (control_count >= 15)
     {
       control_count = 0;
+
+      // ---imu
+      uint8_t imu_buf[6];
+      HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::ACC_DATA_X_LSB, 1, imu_buf, 6, HAL_MAX_DELAY);
+      bno055.UpdateAccel(imu_buf, robot_data.imu_);
+      HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::GYR_DATA_X_LSB, 1, imu_buf, 6, HAL_MAX_DELAY);
+      bno055.UpdateGyro(imu_buf, robot_data.imu_);
+      HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::EULER_H_LSB, 1, imu_buf, 6, HAL_MAX_DELAY);
+      bno055.UpdateEuler(imu_buf, robot_data.imu_);
+
       tmp_output += 3;
       if (tmp_output > 8000) { tmp_output = 3000; }
       HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
@@ -236,6 +248,17 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  // ---init BNO055
+  HAL_Delay(1000);
+  uint8_t bno_id = 0;
+  HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::CHIP_ID_ADDR, 1, &bno_id, 1, HAL_MAX_DELAY);
+  uint8_t bno_mode = rabcl::BNO055::MODE_CONFIG;
+  HAL_I2C_Mem_Write(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::OPR_MODE_ADDR, 1, &bno_mode, 1, HAL_MAX_DELAY);
+  HAL_Delay(20);
+  bno_mode = rabcl::BNO055::MODE_NDOF;
+  HAL_I2C_Mem_Write(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::OPR_MODE_ADDR, 1, &bno_mode, 1, HAL_MAX_DELAY);
+  HAL_Delay(20);
+
   // ---ESC calibration
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
