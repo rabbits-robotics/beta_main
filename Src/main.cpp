@@ -50,7 +50,9 @@ uint16_t control_count = 0;
 uint16_t omni_count = 0;
 int32_t tmp_output = 3000;
 static const int32_t YAW_OFFSET = 24000;  // [0.01 deg] motor zero → robot zero
+
 char printf_buf[100];
+uint8_t uart_led_count = 0;
 
 uint8_t can_tx_idx = 0;
 static const uint8_t CAN_MOTOR_COUNT = 6;
@@ -111,7 +113,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
       tmp_output += 3;
       if (tmp_output > 7500) { tmp_output = 3000; }
-      HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
 
       // --- load motor
       if (robot_data.load_mode_ == 1)
@@ -201,26 +202,27 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-  if (huart == &huart2)
+  if (huart != &huart2) return;
+
+  auto result = uart->HandleRxComplete(robot_data);
+  if (result.data_updated)
   {
-    if (uart->UpdateData(robot_data))
+    uart_led_count++;
+    if (uart_led_count >= 50)
     {
+      uart_led_count = 0;
       HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
     }
-    else
-    {
-      snprintf(printf_buf, 100, "Failed to get uart info\n");
-      HAL_UART_Transmit(&huart2, (uint8_t*)printf_buf, strlen(printf_buf), 1000);
-    }
-    HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
   }
+  HAL_UART_Receive_DMA(&huart2, result.next_rx_buf, result.next_rx_size);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart == &huart2)
   {
-    HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
+    auto result = uart->HandleRxError();
+    HAL_UART_Receive_DMA(&huart2, result.next_rx_buf, result.next_rx_size);
   }
 }
 
@@ -362,7 +364,7 @@ int main(void)
 
   // ---start interrupt processing
   HAL_TIM_Base_Start_IT(&htim2);
-  HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, 8);
+  HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, rabcl::Uart::PACKET_SIZE);
 
   /* USER CODE END 2 */
 
