@@ -49,7 +49,8 @@
 uint16_t control_count = 0;
 uint16_t omni_count = 0;
 int32_t tmp_output = 3000;
-static const int32_t YAW_OFFSET = 24000;  // [0.01 deg] motor zero → robot zero
+static const int32_t YAW_OFFSET = 24000;   // [0.01 deg] motor zero → robot zero
+static const int32_t PITCH_OFFSET = 5000;  // [0.01 deg] motor zero → robot zero
 
 char printf_buf[100];
 uint8_t uart_led_count = 0;
@@ -153,18 +154,19 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (omni_count >= 3)
     {
       omni_count = 0;
+      // --- chassis: omni drive from RasPi commands
       double chassis_vel_cmd[4];
       omni_drive.CalcVel(
-        0.0, 0.0, 0.0,
+        robot_data.chassis_vel_x_, robot_data.chassis_vel_y_, robot_data.chassis_vel_z_,
         chassis_vel_cmd[0], chassis_vel_cmd[1], chassis_vel_cmd[2], chassis_vel_cmd[3],
         robot_data.yaw_act_.position_);
       rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[0], can_motor_data[0]);  // FR
       rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[1], can_motor_data[1]);  // FL
       rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[2], can_motor_data[2]);  // BR
       rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[3], can_motor_data[3]);  // BL
-      // rabcl::Can::PrepareLKMotorPositionCmd(YAW_OFFSET, 3000, can_motor_data[4]);  // YAW
+
       rabcl::Can::PrepareLKMotorReadMotorState2(can_motor_data[4]);  // YAW: read only
-      rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 400, can_motor_data[5]);  // PITCH
+      rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 400, can_motor_data[5]);  // PITCH: test ramp
     }
 
     // ---CAN TX round-robin (1500Hz, 500Hz/motor)
@@ -193,7 +195,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
   if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
   {
     if (rabcl::Can::UpdateData(RxHeader.StdId, RxData, robot_data,
-          YAW_OFFSET * (static_cast<float>(M_PI) / 18000.0f)))
+          YAW_OFFSET * (static_cast<float>(M_PI) / 18000.0f),
+          PITCH_OFFSET * (static_cast<float>(M_PI) / 18000.0f)))
     {
       HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
     }
@@ -221,8 +224,11 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart == &huart2)
   {
-    auto result = uart->HandleRxError();
-    HAL_UART_Receive_DMA(&huart2, result.next_rx_buf, result.next_rx_size);
+    __HAL_UART_CLEAR_FLAG(&huart2, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
+    __HAL_UART_SEND_REQ(&huart2, UART_RXDATA_FLUSH_REQUEST);
+    huart2.ErrorCode = HAL_UART_ERROR_NONE;
+    uart->HandleRxError();
+    HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, rabcl::Uart::PACKET_SIZE);
   }
 }
 
