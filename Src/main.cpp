@@ -48,7 +48,6 @@
 /* USER CODE BEGIN PD */
 uint16_t control_count = 0;
 uint16_t omni_count = 0;
-int32_t tmp_output = 3000;
 static const int32_t YAW_OFFSET = 24000;   // [0.01 deg] motor zero → robot zero
 static const int32_t PITCH_OFFSET = 5000;  // [0.01 deg] motor zero → robot zero
 
@@ -111,9 +110,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       bno055.UpdateGyro(imu_buf, robot_data.imu_);
       HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::EULER_H_LSB, 1, imu_buf, 6, HAL_MAX_DELAY);
       bno055.UpdateEuler(imu_buf, robot_data.imu_);
-
-      tmp_output += 3;
-      if (tmp_output > 7500) { tmp_output = 3000; }
 
       // --- load motor
       if (robot_data.load_mode_ == 1)
