@@ -166,7 +166,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[3], can_motor_data[3]);  // BL
 
       rabcl::Can::PrepareLKMotorReadMotorState2(can_motor_data[4]);  // YAW: read only
-      rabcl::Can::PrepareLKMotorPositionCmd(tmp_output, 400, can_motor_data[5]);  // PITCH: test ramp
+      // --- PITCH: position command
+      {
+        int32_t pitch_cmd = static_cast<int32_t>(robot_data.pitch_pos_ * 5729.578f) + PITCH_OFFSET;
+        rabcl::Can::PrepareLKMotorPositionCmd(pitch_cmd, 400, can_motor_data[5]);
+      }
     }
 
     // ---CAN TX round-robin (1500Hz, 500Hz/motor)
