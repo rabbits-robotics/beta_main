@@ -156,10 +156,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         robot_data.chassis_vel_x_, robot_data.chassis_vel_y_, robot_data.chassis_vel_z_,
         chassis_vel_cmd[0], chassis_vel_cmd[1], chassis_vel_cmd[2], chassis_vel_cmd[3],
         robot_data.yaw_act_.position_);
-      rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[0], can_motor_data[0]);  // FR
-      rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[1], can_motor_data[1]);  // FL
-      rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[2], can_motor_data[2]);  // BR
-      rabcl::Can::PrepareDMMotorVelocityCmd((float)chassis_vel_cmd[3], can_motor_data[3]);  // BL
+      rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[0], can_motor_data[0]);  // FR
+      rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[1], can_motor_data[1]);  // FL
+      rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[2], can_motor_data[2]);  // BR
+      rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[3], can_motor_data[3]);  // BL
 
       rabcl::Can::PrepareLKMotorReadMotorState2(can_motor_data[4]);  // YAW: read only
       // --- PITCH: position command
@@ -198,6 +198,22 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
           YAW_OFFSET * (static_cast<float>(M_PI) / 18000.0f),
           PITCH_OFFSET * (static_cast<float>(M_PI) / 18000.0f)))
     {
+      // DM2325: invert feedback to match robot coordinate system
+      uint32_t id = RxHeader.StdId;
+      if (id == static_cast<uint32_t>(rabcl::CAN_ID::CHASSIS_FRONT_RIGHT_RX) ||
+          id == static_cast<uint32_t>(rabcl::CAN_ID::CHASSIS_FRONT_LEFT_RX) ||
+          id == static_cast<uint32_t>(rabcl::CAN_ID::CHASSIS_BACK_RIGHT_RX) ||
+          id == static_cast<uint32_t>(rabcl::CAN_ID::CHASSIS_BACK_LEFT_RX))
+      {
+        rabcl::MotorInfo * m = nullptr;
+        if (id == static_cast<uint32_t>(rabcl::CAN_ID::CHASSIS_FRONT_RIGHT_RX)) m = &robot_data.chassis_fr_act_;
+        else if (id == static_cast<uint32_t>(rabcl::CAN_ID::CHASSIS_FRONT_LEFT_RX)) m = &robot_data.chassis_fl_act_;
+        else if (id == static_cast<uint32_t>(rabcl::CAN_ID::CHASSIS_BACK_RIGHT_RX)) m = &robot_data.chassis_br_act_;
+        else m = &robot_data.chassis_bl_act_;
+        m->position_ = -m->position_;
+        m->velocity_ = -m->velocity_;
+        m->torque_ = -m->torque_;
+      }
       HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
     }
   }
