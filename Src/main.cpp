@@ -33,6 +33,7 @@
 #include "rabcl/interface/can.hpp"
 #include "rabcl/component/bno055.hpp"
 #include "rabcl/controller/omni_drive.hpp"
+#include "rabcl/controller/pd_gravity_ff.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,7 +54,6 @@ uint16_t omni_count = 0;
 static const int32_t YAW_OFFSET = 24000;   // [0.01 deg] motor zero → robot zero
 static const int32_t PITCH_OFFSET = 5000;  // [0.01 deg] motor zero → robot zero
 
-double yaw_multi_turn = YAW_OFFSET * 0.01 * (M_PI / 180.0);  // [rad] multi-turn tracking
 
 char printf_buf[100];
 uint8_t uart_led_count = 0;
@@ -84,6 +84,7 @@ rabcl::Info robot_data;
 rabcl::Uart* uart;
 rabcl::BNO055 bno055;
 rabcl::OmniDrive omni_drive(0.06, 0.28);
+rabcl::PdGravityFf yaw_pd(5000.0f, 600.0f, 0.0f, 2000.0f);
 
 /* USER CODE END PD */
 
@@ -178,13 +179,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[2], can_motor_data[2]);  // BR
       rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[3], can_motor_data[3]);  // BL
 
-      // --- YAW: position command (shortest path via multi-turn tracking)
+      // --- YAW: torque command with PD control (single-turn angular)
       {
-        double target_rad = static_cast<double>(robot_data.yaw_pos_) +
-          YAW_OFFSET * 0.01 * (M_PI / 180.0);
-        yaw_multi_turn = rabcl::Utils::ShortestPathMultiTurn(yaw_multi_turn, target_rad);
-        int32_t yaw_cmd = static_cast<int32_t>(yaw_multi_turn * 5729.578);
-        rabcl::Can::PrepareLKMotorPositionCmd(yaw_cmd, 400, can_motor_data[4]);
+        float target_rad = static_cast<float>(robot_data.yaw_pos_);
+        float torque = yaw_pd.CalcAngular(
+          target_rad,
+          robot_data.yaw_act_.position_,
+          robot_data.yaw_act_.velocity_);
+        rabcl::Can::PrepareLKMotorTorqueCmd(static_cast<int16_t>(torque), can_motor_data[4]);
       }
       // --- PITCH: position command
       {
@@ -272,7 +274,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
         m->velocity_ = -m->velocity_;
         m->torque_ = -m->torque_;
       }
-      HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
+      // HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
     }
   }
 }
@@ -387,7 +389,7 @@ int main(void)
     uint32_t TxMailbox;
     uint8_t TxData[8];
     TxHeader.StdId = (uint32_t)rabcl::CAN_ID::YAW_TX;
-    rabcl::Can::PrepareLKMotorWritePID(0x0A, 20, 0, 5, TxData);  // angle: kp=20 ki=0 kd=5
+    rabcl::Can::PrepareLKMotorWritePID(0x0A, 200, 0, 50, TxData);  // angle: kp=200 ki=0 kd=50
     HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
     HAL_Delay(10);
     rabcl::Can::PrepareLKMotorWritePID(0x0B, 300, 0, 0, TxData);  // speed: kp=300 ki=0 kd=0
