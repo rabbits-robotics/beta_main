@@ -48,6 +48,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 uint16_t control_count = 0;
+uint16_t imu_count = 0;
 uint16_t omni_count = 0;
 static const int32_t YAW_OFFSET = 24000;   // [0.01 deg] motor zero → robot zero
 static const int32_t PITCH_OFFSET = 5000;  // [0.01 deg] motor zero → robot zero
@@ -56,6 +57,16 @@ double yaw_multi_turn = YAW_OFFSET * 0.01 * (M_PI / 180.0);  // [rad] multi-turn
 
 char printf_buf[100];
 uint8_t uart_led_count = 0;
+
+enum class ImuState : uint8_t
+{
+  IDLE,
+  READING_ACCEL,
+  READING_GYRO,
+  READING_EULER,
+};
+volatile ImuState imu_state = ImuState::IDLE;
+uint8_t imu_buf[6];
 
 uint8_t can_tx_idx = 0;
 static const uint8_t CAN_MOTOR_COUNT = 6;
@@ -99,20 +110,23 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if (htim == &htim2)
   {
+    // ---imu (500Hz)
+    imu_count++;
+    if (imu_count >= 3)
+    {
+      imu_count = 0;
+      if (imu_state == ImuState::IDLE)
+      {
+        imu_state = ImuState::READING_ACCEL;
+        HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::ACC_DATA_X_LSB, 1, imu_buf, 6);
+      }
+    }
+
     // ---control (100Hz)
     control_count++;
     if (control_count >= 15)
     {
       control_count = 0;
-
-      // ---imu
-      uint8_t imu_buf[6];
-      HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::ACC_DATA_X_LSB, 1, imu_buf, 6, HAL_MAX_DELAY);
-      bno055.UpdateAccel(imu_buf, robot_data.imu_);
-      HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::GYR_DATA_X_LSB, 1, imu_buf, 6, HAL_MAX_DELAY);
-      bno055.UpdateGyro(imu_buf, robot_data.imu_);
-      HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::EULER_H_LSB, 1, imu_buf, 6, HAL_MAX_DELAY);
-      bno055.UpdateEuler(imu_buf, robot_data.imu_);
 
       // --- load motor
       if (robot_data.load_mode_ == 1)
@@ -195,6 +209,40 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         can_tx_idx = (can_tx_idx + 1) % CAN_MOTOR_COUNT;
       }
     }
+  }
+}
+
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+  if (hi2c != &hi2c1) return;
+
+  switch (imu_state)
+  {
+    case ImuState::READING_ACCEL:
+      bno055.UpdateAccel(imu_buf, robot_data.imu_);
+      imu_state = ImuState::READING_GYRO;
+      HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::GYR_DATA_X_LSB, 1, imu_buf, 6);
+      break;
+    case ImuState::READING_GYRO:
+      bno055.UpdateGyro(imu_buf, robot_data.imu_);
+      imu_state = ImuState::READING_EULER;
+      HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::EULER_H_LSB, 1, imu_buf, 6);
+      break;
+    case ImuState::READING_EULER:
+      bno055.UpdateEuler(imu_buf, robot_data.imu_);
+      imu_state = ImuState::IDLE;
+      break;
+    default:
+      imu_state = ImuState::IDLE;
+      break;
+  }
+}
+
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
+{
+  if (hi2c == &hi2c1)
+  {
+    imu_state = ImuState::IDLE;
   }
 }
 
