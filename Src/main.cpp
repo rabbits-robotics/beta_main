@@ -28,6 +28,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "rabcl/utils/type.hpp"
+#include "rabcl/utils/utils.hpp"
 #include "rabcl/interface/uart.hpp"
 #include "rabcl/interface/can.hpp"
 #include "rabcl/component/bno055.hpp"
@@ -50,6 +51,8 @@ uint16_t control_count = 0;
 uint16_t omni_count = 0;
 static const int32_t YAW_OFFSET = 24000;   // [0.01 deg] motor zero → robot zero
 static const int32_t PITCH_OFFSET = 5000;  // [0.01 deg] motor zero → robot zero
+
+double yaw_multi_turn = YAW_OFFSET * 0.01 * (M_PI / 180.0);  // [rad] multi-turn tracking
 
 char printf_buf[100];
 uint8_t uart_led_count = 0;
@@ -161,7 +164,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[2], can_motor_data[2]);  // BR
       rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[3], can_motor_data[3]);  // BL
 
-      rabcl::Can::PrepareLKMotorReadMotorState2(can_motor_data[4]);  // YAW: read only
+      // --- YAW: position command (shortest path via multi-turn tracking)
+      {
+        double target_rad = static_cast<double>(robot_data.yaw_pos_) +
+          YAW_OFFSET * 0.01 * (M_PI / 180.0);
+        yaw_multi_turn = rabcl::Utils::ShortestPathMultiTurn(yaw_multi_turn, target_rad);
+        int32_t yaw_cmd = static_cast<int32_t>(yaw_multi_turn * 5729.578);
+        rabcl::Can::PrepareLKMotorPositionCmd(yaw_cmd, 400, can_motor_data[4]);
+      }
       // --- PITCH: position command
       {
         int32_t pitch_cmd = static_cast<int32_t>(robot_data.pitch_pos_ * 5729.578f) + PITCH_OFFSET;
