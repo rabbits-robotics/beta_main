@@ -133,12 +133,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       if (robot_data.load_mode_ == 1)
       {
         HAL_GPIO_WritePin(LOAD_MOTOR_PAHSE_GPIO_Port, LOAD_MOTOR_PAHSE_Pin, GPIO_PIN_SET);
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, (uint16_t)140);
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, (uint16_t)500); // ~999
       }
       else if (robot_data.load_mode_ == 2)
       {
         HAL_GPIO_WritePin(LOAD_MOTOR_PAHSE_GPIO_Port, LOAD_MOTOR_PAHSE_Pin, GPIO_PIN_RESET);
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, (uint16_t)140);
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, (uint16_t)500); // ~999
       }
       else
       {
