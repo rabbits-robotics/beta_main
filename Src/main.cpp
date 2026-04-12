@@ -432,48 +432,6 @@ int main(void)
     Error_Handler();
   }
 
-  // ---write & read back YAW motor PID params
-  {
-    CAN_TxHeaderTypeDef TxHeader;
-    TxHeader.RTR = CAN_RTR_DATA;
-    TxHeader.IDE = CAN_ID_STD;
-    TxHeader.DLC = 8;
-    TxHeader.TransmitGlobalTime = DISABLE;
-    uint32_t TxMailbox;
-    uint8_t TxData[8];
-    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::YAW_TX;
-    rabcl::Can::PrepareLKMotorWritePID(0x0A, 200, 0, 50, TxData);  // angle: kp=200 ki=0 kd=50
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-    rabcl::Can::PrepareLKMotorWritePID(0x0B, 300, 0, 0, TxData);  // speed: kp=300 ki=0 kd=0
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-    rabcl::Can::PrepareLKMotorReadParam(0x0B, TxData);
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-  }
-
-  // ---read PITCH motor PID params
-  {
-    CAN_TxHeaderTypeDef TxHeader;
-    TxHeader.RTR = CAN_RTR_DATA;
-    TxHeader.IDE = CAN_ID_STD;
-    TxHeader.DLC = 8;
-    TxHeader.TransmitGlobalTime = DISABLE;
-    uint32_t TxMailbox;
-    uint8_t TxData[8];
-    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::PITCH_TX;
-    rabcl::Can::PrepareRMDMotorReadPID(TxData);
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-    rabcl::Can::PrepareRMDMotorWritePIDToRAM(250, 100, 250, 0, 250, 0, TxData); // curr(250,100) speed(250,0) pos(250,0)
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-    rabcl::Can::PrepareRMDMotorReadPID(TxData);
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-  }
-
   // ---enable DM motors
   {
     CAN_TxHeaderTypeDef TxHeader;
