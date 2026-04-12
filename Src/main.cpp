@@ -216,6 +216,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
           robot_data.yaw_act_.velocity_);
         rabcl::Can::PrepareLKMotorTorqueCmd(static_cast<int16_t>(torque), can_motor_data[4]);
       }
+      // --- UART DMA watchdog: restart if stuck
+      if (huart2.RxState == HAL_UART_STATE_READY || huart2.ErrorCode != HAL_UART_ERROR_NONE)
+      {
+        __HAL_UART_CLEAR_FLAG(&huart2, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
+        __HAL_UART_SEND_REQ(&huart2, UART_RXDATA_FLUSH_REQUEST);
+        huart2.ErrorCode = HAL_UART_ERROR_NONE;
+        huart2.RxState = HAL_UART_STATE_READY;
+        HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, rabcl::Uart::PACKET_SIZE);
+      }
+
       // --- PITCH: position command
       {
         int32_t pitch_cmd = static_cast<int32_t>(robot_data.pitch_pos_ * 5729.578f) + PITCH_OFFSET;
@@ -384,6 +394,9 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  // ---init indicator: LED ON during initialization
+  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
+
   // ---ESC calibration
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -480,9 +493,16 @@ int main(void)
     HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
   }
 
+  // ---clear UART error flags accumulated during init delay
+  __HAL_UART_CLEAR_FLAG(&huart2, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
+  __HAL_UART_SEND_REQ(&huart2, UART_RXDATA_FLUSH_REQUEST);
+
   // ---start interrupt processing
   HAL_TIM_Base_Start_IT(&htim2);
   HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, rabcl::Uart::PACKET_SIZE);
+
+  // ---init complete: LED OFF
+  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
 
   /* USER CODE END 2 */
 
