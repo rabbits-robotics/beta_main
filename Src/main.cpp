@@ -54,7 +54,6 @@ uint16_t omni_count = 0;
 static const int32_t YAW_OFFSET = 24000;   // [0.01 deg] motor zero → robot zero
 static const int32_t PITCH_OFFSET = 5000;  // [0.01 deg] motor zero → robot zero
 
-
 char printf_buf[100];
 uint8_t uart_led_count = 0;
 
@@ -85,6 +84,10 @@ rabcl::Uart* uart;
 rabcl::BNO055 bno055;
 rabcl::OmniDrive omni_drive(0.06, 0.28);
 rabcl::PdGravityFf yaw_pd(5000.0f, 600.0f, 0.0f, 2000.0f);
+
+float imu_rad_init = 0.0f;
+float imu_rad_sum = 0.0f;
+uint8_t pre_chassis_mode = 0;
 
 /* USER CODE END PD */
 
@@ -168,10 +171,27 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (omni_count >= 3)
     {
       omni_count = 0;
+      // --- infinite rotation mode: IMU heading tracking
+      float imu_heading = robot_data.imu_.euler_heading_;
+      if (pre_chassis_mode == 0 && robot_data.chassis_mode_ == 1)
+      {
+        imu_rad_init = imu_heading;
+      }
+      if (pre_chassis_mode == 1 && robot_data.chassis_mode_ == 0)
+      {
+        imu_rad_sum += (imu_heading - imu_rad_init);
+      }
+      pre_chassis_mode = robot_data.chassis_mode_;
+
       // --- chassis: omni drive from RasPi commands
+      float chassis_rot_z = robot_data.chassis_vel_z_;
+      if (robot_data.chassis_mode_ == 1)
+      {
+        chassis_rot_z += 1.0f;
+      }
       double chassis_vel_cmd[4];
       omni_drive.CalcVel(
-        robot_data.chassis_vel_x_, robot_data.chassis_vel_y_, robot_data.chassis_vel_z_,
+        robot_data.chassis_vel_x_, robot_data.chassis_vel_y_, chassis_rot_z,
         chassis_vel_cmd[0], chassis_vel_cmd[1], chassis_vel_cmd[2], chassis_vel_cmd[3],
         robot_data.yaw_act_.position_);
       rabcl::Can::PrepareDMMotorVelocityCmd(-(float)chassis_vel_cmd[0], can_motor_data[0]);  // FR
@@ -181,7 +201,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
       // --- YAW: torque command with PD control (single-turn angular)
       {
-        float target_rad = static_cast<float>(robot_data.yaw_pos_);
+        float target_rad;
+        if (robot_data.chassis_mode_ == 1)
+        {
+          target_rad = static_cast<float>(robot_data.yaw_pos_) + imu_rad_sum + (imu_heading - imu_rad_init);
+        }
+        else
+        {
+          target_rad = static_cast<float>(robot_data.yaw_pos_) + imu_rad_sum;
+        }
         float torque = yaw_pd.CalcAngular(
           target_rad,
           robot_data.yaw_act_.position_,
@@ -223,12 +251,18 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
     case ImuState::READING_ACCEL:
       bno055.UpdateAccel(imu_buf, robot_data.imu_);
       imu_state = ImuState::READING_GYRO;
-      HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::GYR_DATA_X_LSB, 1, imu_buf, 6);
+      if (HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::GYR_DATA_X_LSB, 1, imu_buf, 6) != HAL_OK)
+      {
+        imu_state = ImuState::IDLE;
+      }
       break;
     case ImuState::READING_GYRO:
       bno055.UpdateGyro(imu_buf, robot_data.imu_);
       imu_state = ImuState::READING_EULER;
-      HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::EULER_H_LSB, 1, imu_buf, 6);
+      if (HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::EULER_H_LSB, 1, imu_buf, 6) != HAL_OK)
+      {
+        imu_state = ImuState::IDLE;
+      }
       break;
     case ImuState::READING_EULER:
       bno055.UpdateEuler(imu_buf, robot_data.imu_);
@@ -244,6 +278,8 @@ void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
 {
   if (hi2c == &hi2c1)
   {
+    HAL_I2C_DeInit(&hi2c1);
+    HAL_I2C_Init(&hi2c1);
     imu_state = ImuState::IDLE;
   }
 }
