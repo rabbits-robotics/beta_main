@@ -84,6 +84,7 @@ rabcl::Uart* uart;
 rabcl::BNO055 bno055;
 rabcl::OmniDrive omni_drive(0.06, 0.28);
 rabcl::PdGravityFf yaw_pd(5000.0f, 600.0f, 0.0f, 2000.0f);
+rabcl::PdGravityFf pitch_pd(8000.0f, 800.0f, 0.0f, 2000.0f);
 
 float imu_rad_init = 0.0f;
 float imu_rad_sum = 0.0f;
@@ -216,6 +217,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
           robot_data.yaw_act_.velocity_);
         rabcl::Can::PrepareLKMotorTorqueCmd(static_cast<int16_t>(torque), can_motor_data[4]);
       }
+      // --- PITCH: torque command with PD control
+      {
+        float torque = pitch_pd.CalcAngular(
+          static_cast<float>(robot_data.pitch_pos_),
+          robot_data.pitch_act_.position_,
+          robot_data.pitch_act_.velocity_);
+        rabcl::Can::PrepareLKMotorTorqueCmd(static_cast<int16_t>(torque), can_motor_data[5]);
+      }
+
       // --- UART DMA watchdog: restart if stuck
       if (huart2.RxState == HAL_UART_STATE_READY || huart2.ErrorCode != HAL_UART_ERROR_NONE)
       {
@@ -224,12 +234,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         huart2.ErrorCode = HAL_UART_ERROR_NONE;
         huart2.RxState = HAL_UART_STATE_READY;
         HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, rabcl::Uart::PACKET_SIZE);
-      }
-
-      // --- PITCH: position command
-      {
-        int32_t pitch_cmd = static_cast<int32_t>(robot_data.pitch_pos_ * 5729.578f) + PITCH_OFFSET;
-        rabcl::Can::PrepareLKMotorPositionCmd(pitch_cmd, 400, can_motor_data[5]);
       }
     }
 
