@@ -165,6 +165,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         // left
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, (uint16_t)1000);
       }
+
+      // ---feedback TX (100Hz)
+      uart->PrepareFeedbackPacket(robot_data);
+      HAL_UART_Transmit_IT(&huart2,
+          uart->feedback_transmit_buffer_,
+          rabcl::Uart::FEEDBACK_PACKET_SIZE);
     }
 
     // ---motor commands (500Hz)
@@ -233,7 +239,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         __HAL_UART_SEND_REQ(&huart2, UART_RXDATA_FLUSH_REQUEST);
         huart2.ErrorCode = HAL_UART_ERROR_NONE;
         huart2.RxState = HAL_UART_STATE_READY;
-        HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, rabcl::Uart::PACKET_SIZE);
+        HAL_UART_Receive_DMA(&huart2, uart->reference_receive_buffer_, rabcl::Uart::REFERENCE_PACKET_SIZE);
       }
     }
 
@@ -354,7 +360,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     __HAL_UART_SEND_REQ(&huart2, UART_RXDATA_FLUSH_REQUEST);
     huart2.ErrorCode = HAL_UART_ERROR_NONE;
     uart->HandleRxError();
-    HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, rabcl::Uart::PACKET_SIZE);
+    HAL_UART_Receive_DMA(&huart2, uart->reference_receive_buffer_, rabcl::Uart::REFERENCE_PACKET_SIZE);
   }
 }
 
@@ -461,7 +467,7 @@ int main(void)
 
   // ---start interrupt processing
   HAL_TIM_Base_Start_IT(&htim2);
-  HAL_UART_Receive_DMA(&huart2, uart->uart_receive_buffer_, rabcl::Uart::PACKET_SIZE);
+  HAL_UART_Receive_DMA(&huart2, uart->reference_receive_buffer_, rabcl::Uart::REFERENCE_PACKET_SIZE);
 
   // ---init complete: LED OFF
   HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
