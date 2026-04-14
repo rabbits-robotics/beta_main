@@ -79,6 +79,9 @@ const uint32_t can_motor_ids[CAN_MOTOR_COUNT] = {
 };
 uint8_t can_motor_data[CAN_MOTOR_COUNT][8];
 
+uint16_t dm_enable_count = 0;
+uint8_t dm_enable_remain = 0;
+
 rabcl::Info robot_data;
 rabcl::Uart* uart;
 rabcl::BNO055 bno055;
@@ -243,6 +246,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       }
     }
 
+    // ---DM2325 periodic enable (0.5Hz)
+    dm_enable_count++;
+    if (dm_enable_count >= 750)
+    {
+      dm_enable_count = 0;
+      dm_enable_remain = 4;
+    }
+
     // ---CAN TX round-robin (1500Hz, 500Hz/motor)
     {
       CAN_TxHeaderTypeDef TxHeader;
@@ -255,7 +266,19 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       for (uint8_t i = 0; i < free_mb; i++)
       {
         TxHeader.StdId = can_motor_ids[can_tx_idx];
-        HAL_CAN_AddTxMessage(&hcan, &TxHeader, can_motor_data[can_tx_idx], &TxMailbox);
+        uint8_t * tx_data = can_motor_data[can_tx_idx];
+
+        // DM motor (index 0..3): periodic enable
+        uint8_t enable_data[8];
+        if (dm_enable_remain > 0 && can_tx_idx < 4)
+        {
+          rabcl::Can::PrepareDMMotorEnable(enable_data);
+          tx_data = enable_data;
+          TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_RIGHT_TX + can_tx_idx;
+          dm_enable_remain--;
+        }
+
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, tx_data, &TxMailbox);
         can_tx_idx = (can_tx_idx + 1) % CAN_MOTOR_COUNT;
       }
     }
@@ -436,29 +459,6 @@ int main(void)
   if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
   {
     Error_Handler();
-  }
-
-  // ---enable DM motors
-  {
-    CAN_TxHeaderTypeDef TxHeader;
-    TxHeader.RTR = CAN_RTR_DATA;
-    TxHeader.IDE = CAN_ID_STD;
-    TxHeader.DLC = 8;
-    TxHeader.TransmitGlobalTime = DISABLE;
-    uint32_t TxMailbox;
-    uint8_t TxData[8];
-    rabcl::Can::PrepareDMMotorEnable(TxData);
-    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_RIGHT_TX;
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_LEFT_TX;
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_BACK_RIGHT_TX;
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    HAL_Delay(10);
-    TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_BACK_LEFT_TX;
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
   }
 
   // ---clear UART error flags accumulated during init delay
