@@ -87,7 +87,7 @@ rabcl::Uart* uart;
 rabcl::BNO055 bno055;
 rabcl::OmniDrive omni_drive(0.06, 0.28);
 rabcl::PdGravityFf yaw_pd(5000.0f, 600.0f, 0.0f, 2000.0f);
-rabcl::PdGravityFf pitch_pd(8000.0f, 800.0f, 0.0f, 2000.0f);
+rabcl::PdGravityFf pitch_pd(4300.0f, 215.0f, -600.0f, 2000.0f);
 
 float imu_rad_init = 0.0f;
 float imu_rad_sum = 0.0f;
