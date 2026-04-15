@@ -93,6 +93,12 @@ float imu_rad_init = 0.0f;
 float imu_rad_sum = 0.0f;
 uint8_t pre_chassis_mode = 0;
 
+float spin_speed_min = 1.0f;
+float spin_speed_max = 2.0f;
+float spin_speed = 0.0f;
+uint16_t spin_change_count = 0;
+uint16_t spin_change_interval = 0;
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -197,7 +203,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       float chassis_rot_z = robot_data.chassis_vel_z_;
       if (robot_data.chassis_mode_ == 1)
       {
-        chassis_rot_z += 1.0f;
+        spin_change_count++;
+        if (spin_change_count >= spin_change_interval)
+        {
+          spin_change_count = 0;
+          spin_speed = rabcl::Utils::RandomFloat(spin_speed_min, spin_speed_max);
+          spin_change_interval = 250 + (rabcl::Utils::Random() % 1250);
+        }
+        chassis_rot_z += spin_speed;
       }
       double chassis_vel_cmd[4];
       omni_drive.CalcVel(
@@ -464,6 +477,9 @@ int main(void)
   // ---clear UART error flags accumulated during init delay
   __HAL_UART_CLEAR_FLAG(&huart2, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
   __HAL_UART_SEND_REQ(&huart2, UART_RXDATA_FLUSH_REQUEST);
+
+  // ---random seed
+  rabcl::Utils::SetRandomSeed(HAL_GetTick());
 
   // ---start interrupt processing
   HAL_TIM_Base_Start_IT(&htim2);
