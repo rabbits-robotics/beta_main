@@ -267,7 +267,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       dm_enable_remain = 4;
     }
 
-    // ---CAN TX round-robin (1500Hz, 500Hz/motor)
+    // ---CAN TX sequential (1500Hz, 250Hz/motor)
+    if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) > 0)
     {
       CAN_TxHeaderTypeDef TxHeader;
       TxHeader.RTR = CAN_RTR_DATA;
@@ -275,25 +276,22 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       TxHeader.DLC = 8;
       TxHeader.TransmitGlobalTime = DISABLE;
       uint32_t TxMailbox;
-      uint8_t free_mb = HAL_CAN_GetTxMailboxesFreeLevel(&hcan);
-      for (uint8_t i = 0; i < free_mb; i++)
+
+      TxHeader.StdId = can_motor_ids[can_tx_idx];
+      uint8_t * tx_data = can_motor_data[can_tx_idx];
+
+      // DM motor (index 0..3): periodic enable
+      uint8_t enable_data[8];
+      if (dm_enable_remain > 0 && can_tx_idx < 4)
       {
-        TxHeader.StdId = can_motor_ids[can_tx_idx];
-        uint8_t * tx_data = can_motor_data[can_tx_idx];
-
-        // DM motor (index 0..3): periodic enable
-        uint8_t enable_data[8];
-        if (dm_enable_remain > 0 && can_tx_idx < 4)
-        {
-          rabcl::Can::PrepareDMMotorEnable(enable_data);
-          tx_data = enable_data;
-          TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_RIGHT_TX + can_tx_idx;
-          dm_enable_remain--;
-        }
-
-        HAL_CAN_AddTxMessage(&hcan, &TxHeader, tx_data, &TxMailbox);
-        can_tx_idx = (can_tx_idx + 1) % CAN_MOTOR_COUNT;
+        rabcl::Can::PrepareDMMotorEnable(enable_data);
+        tx_data = enable_data;
+        TxHeader.StdId = (uint32_t)rabcl::CAN_ID::CHASSIS_FRONT_RIGHT_TX + can_tx_idx;
+        dm_enable_remain--;
       }
+
+      HAL_CAN_AddTxMessage(&hcan, &TxHeader, tx_data, &TxMailbox);
+      can_tx_idx = (can_tx_idx + 1) % CAN_MOTOR_COUNT;
     }
   }
 }
