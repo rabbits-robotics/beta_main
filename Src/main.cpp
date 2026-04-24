@@ -57,15 +57,6 @@ static const int32_t PITCH_OFFSET = 5000;  // [0.01 deg] motor zero → robot ze
 char printf_buf[100];
 uint8_t uart_led_count = 0;
 
-enum class ImuState : uint8_t
-{
-  IDLE,
-  READING_ACCEL,
-  READING_GYRO,
-  READING_EULER,
-};
-volatile ImuState imu_state = ImuState::IDLE;
-uint8_t imu_buf[6];
 
 uint8_t can_tx_idx = 0;
 static const uint8_t CAN_MOTOR_COUNT = 6;
@@ -120,19 +111,53 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// I2C bus recovery: release any slave holding SCL/SDA from a prior session
+// by manually toggling SCL 9 times + manual STOP, then re-init the peripheral.
+static void I2cBusRecovery()
+{
+  HAL_I2C_DeInit(&hi2c1);
+
+  GPIO_InitTypeDef g = {0};
+  g.Pin   = GPIO_PIN_6 | GPIO_PIN_7;
+  g.Mode  = GPIO_MODE_OUTPUT_OD;
+  g.Pull  = GPIO_NOPULL;
+  g.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &g);
+
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6 | GPIO_PIN_7, GPIO_PIN_SET);
+  for (volatile int i = 0; i < 400; i++) { __NOP(); }
+
+  for (int i = 0; i < 9; i++) {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+    for (volatile int j = 0; j < 400; j++) { __NOP(); }
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+    for (volatile int j = 0; j < 400; j++) { __NOP(); }
+  }
+
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+  for (volatile int j = 0; j < 400; j++) { __NOP(); }
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+  for (volatile int j = 0; j < 400; j++) { __NOP(); }
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+  for (volatile int j = 0; j < 400; j++) { __NOP(); }
+
+  MX_I2C1_Init();
+}
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if (htim == &htim2)
   {
-    // ---imu (500Hz)
+    // ---imu (100Hz): proto2_yaw style — blocking 2B read of EUL_H only
     imu_count++;
-    if (imu_count >= 3)
+    if (imu_count >= 15)
     {
       imu_count = 0;
-      if (imu_state == ImuState::IDLE)
+      uint8_t buf[2];
+      if (HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::EULER_H_LSB, 1, buf, 2, HAL_MAX_DELAY) == HAL_OK)
       {
-        imu_state = ImuState::READING_ACCEL;
-        HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::ACC_DATA_X_LSB, 1, imu_buf, 6);
+        int16_t raw = (int16_t)((buf[1] << 8) | buf[0]);
+        robot_data.imu_.euler_heading_ = raw * (1.0f / 16.0f) * (M_PI / 180.0f);
       }
     }
 
@@ -296,48 +321,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   }
 }
 
-void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
-{
-  if (hi2c != &hi2c1) return;
-
-  switch (imu_state)
-  {
-    case ImuState::READING_ACCEL:
-      bno055.UpdateAccel(imu_buf, robot_data.imu_);
-      imu_state = ImuState::READING_GYRO;
-      if (HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::GYR_DATA_X_LSB, 1, imu_buf, 6) != HAL_OK)
-      {
-        imu_state = ImuState::IDLE;
-      }
-      break;
-    case ImuState::READING_GYRO:
-      bno055.UpdateGyro(imu_buf, robot_data.imu_);
-      imu_state = ImuState::READING_EULER;
-      if (HAL_I2C_Mem_Read_IT(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::EULER_H_LSB, 1, imu_buf, 6) != HAL_OK)
-      {
-        imu_state = ImuState::IDLE;
-      }
-      break;
-    case ImuState::READING_EULER:
-      bno055.UpdateEuler(imu_buf, robot_data.imu_);
-      imu_state = ImuState::IDLE;
-      break;
-    default:
-      imu_state = ImuState::IDLE;
-      break;
-  }
-}
-
-void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
-{
-  if (hi2c == &hi2c1)
-  {
-    HAL_I2C_DeInit(&hi2c1);
-    HAL_I2C_Init(&hi2c1);
-    imu_state = ImuState::IDLE;
-  }
-}
-
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
   CAN_RxHeaderTypeDef RxHeader;
@@ -452,14 +435,19 @@ int main(void)
   HAL_Delay(3000);
 
   // ---init BNO055
-  HAL_Delay(1000);
-  uint8_t bno_id = 0;
-  HAL_I2C_Mem_Read(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::CHIP_ID_ADDR, 1, &bno_id, 1, HAL_MAX_DELAY);
+  // 1) release any physically stuck SCL/SDA from a prior session
+  I2cBusRecovery();
+  HAL_Delay(100);
+  // 2) SYS_TRIGGER (0x3F) bit 5 = system reset; blind write
+  uint8_t reset_cmd = 0x20;
+  HAL_I2C_Mem_Write(&hi2c1, rabcl::BNO055::I2C_ADDR, 0x3F, 1, &reset_cmd, 1, 100);
+  HAL_Delay(700);  // BNO055 internal boot time
+  // 3) configure to NDOF mode
   uint8_t bno_mode = rabcl::BNO055::MODE_CONFIG;
-  HAL_I2C_Mem_Write(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::OPR_MODE_ADDR, 1, &bno_mode, 1, HAL_MAX_DELAY);
+  HAL_I2C_Mem_Write(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::OPR_MODE_ADDR, 1, &bno_mode, 1, 100);
   HAL_Delay(20);
   bno_mode = rabcl::BNO055::MODE_NDOF;
-  HAL_I2C_Mem_Write(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::OPR_MODE_ADDR, 1, &bno_mode, 1, HAL_MAX_DELAY);
+  HAL_I2C_Mem_Write(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::OPR_MODE_ADDR, 1, &bno_mode, 1, 100);
   HAL_Delay(20);
 
   // ---start PWM
