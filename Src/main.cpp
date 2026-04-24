@@ -84,11 +84,13 @@ float imu_rad_init = 0.0f;
 float imu_rad_sum = 0.0f;
 uint8_t pre_chassis_mode = 0;
 
-float spin_speed_min = 1.0f;
-float spin_speed_max = 2.0f;
+// FF odometry: integrate yaw command while chassis_mode == 1 (IMU-free spin compensation)
+float yaw_ff = 0.0f;
+
+float spin_speed_min = 2.5f;
+float spin_speed_max = 5.0f;
 float spin_speed = 0.0f;
-uint16_t spin_change_count = 0;
-uint16_t spin_change_interval = 0;
+float spin_t = 0.0f;  // phase accumulator, wraps at 8*PI
 
 /* USER CODE END PD */
 
@@ -148,7 +150,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if (htim == &htim2)
   {
-    // ---imu (100Hz): proto2_yaw style — blocking 2B read of EUL_H only
+    // ---imu: DISABLED until BNO055 hardware is verified
+#if 0
     imu_count++;
     if (imu_count >= 15)
     {
@@ -160,6 +163,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         robot_data.imu_.euler_heading_ = raw * (1.0f / 16.0f) * (M_PI / 180.0f);
       }
     }
+#endif
 
     // ---control (100Hz)
     control_count++;
@@ -212,7 +216,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (omni_count >= 3)
     {
       omni_count = 0;
-      // --- infinite rotation mode: IMU heading tracking
+#if 0
+      // --- infinite rotation mode: IMU heading tracking (DISABLED)
       float imu_heading = robot_data.imu_.euler_heading_;
       if (pre_chassis_mode == 0 && robot_data.chassis_mode_ == 1)
       {
@@ -223,19 +228,21 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         imu_rad_sum += (imu_heading - imu_rad_init);
       }
       pre_chassis_mode = robot_data.chassis_mode_;
+#endif
 
       // --- chassis: omni drive from RasPi commands
       float chassis_rot_z = robot_data.chassis_vel_z_;
       if (robot_data.chassis_mode_ == 1)
       {
-        spin_change_count++;
-        if (spin_change_count >= spin_change_interval)
-        {
-          spin_change_count = 0;
-          spin_speed = rabcl::Utils::RandomFloat(spin_speed_min, spin_speed_max);
-          spin_change_interval = 250 + (rabcl::Utils::Random() % 1250);
+        // smooth random-like spin (no reverse): v = v_min + v_max * (((sin t + sin t/2 + sin t/4)/3 + 1) * 0.5), t ∈ [0, 8π), ~10s/cycle
+        spin_t += 8.0f * static_cast<float>(M_PI) / 5000.0f;  // 500Hz * 10s = 5000 ticks per 8π
+        if (spin_t >= 8.0f * static_cast<float>(M_PI)) {
+          spin_t -= 8.0f * static_cast<float>(M_PI);
         }
+        float phase = ((sinf(spin_t) + sinf(spin_t * 0.5f) + sinf(spin_t * 0.25f)) * (1.0f / 3.0f) + 1.0f) * 0.5f;
+        spin_speed = spin_speed_min + (spin_speed_max - spin_speed_min) * phase;
         chassis_rot_z += spin_speed;
+        yaw_ff += chassis_rot_z * 0.002f;  // 500Hz -> dt = 2ms; FF yaw odometry
       }
       double chassis_vel_cmd[4];
       omni_drive.CalcVel(
@@ -249,15 +256,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
       // --- YAW: torque command with PD control (single-turn angular)
       {
-        float target_rad;
-        if (robot_data.chassis_mode_ == 1)
-        {
-          target_rad = static_cast<float>(robot_data.yaw_pos_) + imu_rad_sum + (imu_heading - imu_rad_init);
-        }
-        else
-        {
-          target_rad = static_cast<float>(robot_data.yaw_pos_) + imu_rad_sum;
-        }
+        float target_rad = static_cast<float>(robot_data.yaw_pos_) + yaw_ff;
         float torque = yaw_pd.CalcAngular(
           target_rad,
           robot_data.yaw_act_.position_,
@@ -434,7 +433,8 @@ int main(void)
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, (uint16_t)1000);
   HAL_Delay(3000);
 
-  // ---init BNO055
+  // ---init BNO055: DISABLED until hardware is verified
+#if 0
   // 1) release any physically stuck SCL/SDA from a prior session
   I2cBusRecovery();
   HAL_Delay(100);
@@ -449,6 +449,7 @@ int main(void)
   bno_mode = rabcl::BNO055::MODE_NDOF;
   HAL_I2C_Mem_Write(&hi2c1, rabcl::BNO055::I2C_ADDR, rabcl::BNO055::OPR_MODE_ADDR, 1, &bno_mode, 1, 100);
   HAL_Delay(20);
+#endif
 
   // ---start PWM
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
